@@ -1,0 +1,180 @@
+import os
+from os import listdir
+from os.path import join
+import re
+from nltk.tokenize import word_tokenize, sent_tokenize
+import math
+import glob
+import pandas as pd
+
+
+tijding = ['tijding', 'tyding', 'tydinge', 'tijdingh', 'tydingen', 'tydinghen', 'tijdinghe', 'tijdinghen', 'tijdinge', 'tydynghe', 'tijdijnge', 'tijdijnghe']
+courant = ['courant', 'courante', 'kourant', 'courantier', 'couranten', 'krant', 'kranten']
+gazette = ['gazette', 'gaset', 'gasetten', 'gasette']
+nieuws = ['nieuwsbladen','nieuwsblaederen', 'nieuwsblad', 'nieuwsblaed', 'nieuws blaed', 'nieuws blaederen', 'nieuwsbladt', 'nieuws bladt', 'nieuwstijdingen', 
+            'nieuwstijding', 'nieuwstyding''nieuwstydinge', 'nieuwstijdingh', 'nieuwstydingen', 'nieuwstydinghen', 'nieuwstijdinghe', 'nieuwstijdinghen', 
+            'nieuwstijdinge', 'nieuwstydynghe', 'nieuwstijdijnge', 'nieuwstijdijnghe']
+advertentie = ['advertentie', 'advertentien', 'advertenties']
+
+all_terms = []
+all_terms.extend( tijding )
+all_terms.extend( courant )
+all_terms.extend( gazette )
+all_terms.extend( nieuws )
+
+print( f'{len(all_terms)} terms.' )
+
+
+def count_occurrences( text , terms ):
+
+    words = word_tokenize(text)
+
+    freq = dict()
+    for word in words:
+        if word.lower() in terms: 
+            freq[word.lower()] = freq.get( word.lower(), 0 ) + 1
+
+    return freq
+
+
+def remove_punctuation(text):
+
+    punctuation = "[{`,.?!:;/\()'}]" + chr(34)
+
+    new_text = ''
+    skip = False
+
+    i = 0
+    while i < len(text):
+
+        if i <= len(text) - 3 and text[i+1] == '/':
+            check = text[i:i+3]
+            if check[0].isdigit() and check[2].isdigit():
+                new_text += check
+                i += 2
+                skip = True
+        
+        if skip == False:
+            if text[i] not in punctuation:
+                new_text += text[i]
+
+        i += 1
+        skip = False
+
+    return new_text
+
+
+def concordance( text , term , width = 10 ):
+
+    words = []
+    concordance = []
+    distance = math.floor( width / 2 )
+    term = re.sub('[*|+]' , '' , term )
+
+    text = remove_punctuation( text )
+    words = word_tokenize( text )
+    
+    i = 0
+    for word in words:
+
+        if re.search( term , str(word) , re.IGNORECASE ):
+            match = ''
+
+            for x in range( i - distance , ( i + distance ) + 1 ):
+                if x >= 0 and x < len(words):
+                    match += words[x] + ' '
+    
+            concordance.append( match.strip() )
+
+        i += 1
+
+    return concordance
+
+
+def format_result( text , term , width = 10 ):
+
+    words = []
+    fragment = ''
+    distance = math.floor( width / 2 )
+
+    text = remove_punctuation( text )
+    words = word_tokenize( text )
+
+    i = 0
+    for word in words:
+
+        if re.search( term , str(word) , re.IGNORECASE ):
+
+            for x in range( i - distance , ( i + distance ) + 1 ):
+                if x >= 0 and x < len(words):
+                    fragment += words[x] + ' '
+    
+            fragment = fragment.strip()
+            break
+
+        i += 1
+
+    return fragment
+
+
+location = 'C:/Users/tvwijngaarden/Visual Studio 2022/Projects/Document Analyzer/Documents/'
+path = glob.glob( location + '*.txt' )
+
+fragment_length = 36
+minimum_sentence_length = 18
+
+rows = []
+
+for i, file_name in enumerate( path, 1 ):
+    
+    print( f'{file_name} [{i}/{len(path)}]' )
+    
+    file_id = re.search( r'(?<=Documents\\)(.*?)(?=.txt)' , file_name ).group(0)
+    year = file_id[:4]
+
+    full_text = ''
+    with open( file_name , encoding = 'utf-8' ) as file:
+        sections = file.readlines()
+        full_text = ' '.join(sections)
+
+    full_text = re.sub( r'\s+' , ' ' , full_text.strip() )
+    full_text = re.sub( r'[-]\s' , '' , full_text )
+    
+    found = dict()
+
+    sentences = sent_tokenize(full_text)
+    for x in range( 0 , len(sentences) - 1 ):
+
+        freq = count_occurrences( sentences[x] , all_terms )
+        if sum(freq.values()) > 0:
+            found[x] = True
+
+            if x > 0:
+                y = 0
+                while x - y > 0 and len( word_tokenize( remove_punctuation( sentences[x] ))) < minimum_sentence_length:
+                    if found.get( x - y - 1 , False) != True:
+                        sentences[x] = sentences[x - y - 1] + ' ' + sentences[x]
+                        y += 1
+                    else:
+                        break
+
+            for term in freq:
+                fragments = concordance( sentences[x] , term , fragment_length )
+
+                for fragment in fragments:
+                    if remove_punctuation( sentences[x] ) == fragment:
+                        if x > 0:
+                            
+                            y = 0
+                            while x - y > 0 and len( word_tokenize( fragment )) < minimum_sentence_length:
+                                fragment = sentences[x - y - 1] + ' ' + fragment
+                                y += 1
+                            if y > 0:
+                                fragment = format_result( fragment , term , fragment_length )
+                    
+                    rows.append( [file_id, year, list(freq.keys()), fragment] )
+                
+
+df = pd.DataFrame( rows , columns = ['file_id', 'year', 'found_terms', 'fragment'] )
+df.to_csv( 'newspapers.csv' , index = False )
+print( f'{df.shape[0]} fragments were found.' )
